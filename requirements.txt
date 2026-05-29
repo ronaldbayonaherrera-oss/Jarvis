@@ -1,0 +1,11 @@
+google-genai
+requests
+sounddevice
+scipy
+numpy
+pyttsx3
+faster-whisper
+onnxruntime
+openwakeword
+flask
+python-dotenv
