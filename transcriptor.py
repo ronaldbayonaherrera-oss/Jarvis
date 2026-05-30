@@ -1,12 +1,12 @@
 """
-prueb.py — Grabador y transcriptor de voz con Whisper para Termux.
+transcriptor.py — Grabador y transcriptor de voz con Whisper para Termux.
 
 Uso:
-    python prueb.py              # graba 5 segundos
-    python prueb.py -t 10        # graba 10 segundos
-    python prueb.py -l en        # transcribe en inglés
-    python prueb.py --loop       # modo continuo (Ctrl+C para salir)
-    python prueb.py -o out.txt   # guarda la transcripción en archivo
+    python transcriptor.py              # graba 5 segundos
+    python transcriptor.py -t 10        # graba 10 segundos
+    python transcriptor.py -l en        # transcribe en inglés
+    python transcriptor.py --loop       # modo continuo (Ctrl+C para salir)
+    python transcriptor.py -o out.txt   # guarda la transcripción en archivo
 """
 
 import argparse
@@ -14,10 +14,12 @@ import shutil
 import subprocess
 import sys
 import time
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 BASE_DIR = Path.home() / "Jarvis" / "whisper.cpp"
 
@@ -77,6 +79,18 @@ def cleanup_on_exit():
         limpiar()
 
 
+# ✅ Función auxiliar para verificación atómica de archivos
+def _archivo_listo(ruta: Path, min_size: int = 1) -> bool:
+    """Verifica si el archivo existe y tiene tamaño mínimo (de forma segura)."""
+    try:
+        if ruta.exists():
+            stat = ruta.stat()
+            return stat.st_size >= min_size
+    except (OSError, FileNotFoundError):
+        pass
+    return False
+
+
 # ---------- pipeline ----------
 
 def grabar(segundos: int) -> bool:
@@ -102,8 +116,9 @@ def grabar(segundos: int) -> bool:
         stderr=subprocess.DEVNULL,
     )
 
+    # ✅ Verificación mejorada con retry
     for _ in range(20):
-        if CFG.audio_raw.exists() and CFG.audio_raw.stat().st_size > 0:
+        if _archivo_listo(CFG.audio_raw):  # Uso de función segura
             return True
         time.sleep(0.1)
 
@@ -125,7 +140,7 @@ def convertir() -> bool:
         stderr=subprocess.PIPE,
     )
 
-    if result.returncode != 0 or not CFG.audio_wav.exists():
+    if result.returncode != 0 or not _archivo_listo(CFG.audio_wav):
         log("❌ Error al convertir el audio")
         if result.stderr:
             log(result.stderr.decode(errors="ignore").strip())
@@ -180,7 +195,7 @@ def transcribir_archivo(ruta: str, idioma: str = "es") -> str:
             timeout=30,
         )
 
-        if result.returncode != 0 or not wav_tmp.exists():
+        if result.returncode != 0 or not _archivo_listo(wav_tmp):
             ruta_final = ruta_path
         else:
             ruta_final = wav_tmp

@@ -1,5 +1,6 @@
 import logging
 import time
+import threading
 import requests
 import numpy as np
 import pyttsx3
@@ -31,16 +32,19 @@ for v in _voces:
         _tts_engine.setProperty("voice", v.id)
         break
 
-# --- Whisper (carga diferida) ---
+# --- Whisper (carga diferida con sincronización) ---
 _whisper_model: WhisperModel | None = None
+_whisper_lock = threading.Lock()  # ✅ Protege acceso a _whisper_model
 
 
 def _get_whisper() -> WhisperModel:
+    """Obtiene instancia de Whisper con thread-safety."""
     global _whisper_model
-    if _whisper_model is None:
-        logging.info("Cargando modelo Whisper base...")
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-    return _whisper_model
+    with _whisper_lock:  # ✅ Sincronización
+        if _whisper_model is None:
+            logging.info("Cargando modelo Whisper base...")
+            _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        return _whisper_model
 
 
 # --- Gemini ---
@@ -53,6 +57,7 @@ if USE_CLOUD_AI:
         logging.info(f"✅ Gemini listo: {CLOUD_MODEL_NAME}")
     except Exception as e:
         logging.error(f"⚠️ Gemini falló: {e}")
+        _gemini_desactivado = True
 
 
 # --- TTS ---
@@ -112,8 +117,9 @@ def query_cloud_ai(prompt: str) -> str | None:
         response = client_gemini.models.generate_content(
             model=CLOUD_MODEL_NAME, contents=prompt)
         return response.text.strip() if response and response.text else None
-    except Exception:
+    except Exception as e:
         _gemini_desactivado = True
+        logging.error(f"Gemini no disponible: {e}")
         print("Gemini no disponible. Cambiando a modelo local.")
         return None
 
@@ -143,7 +149,7 @@ def query_local_ai(prompt: str) -> str | None:
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"].strip() or None
     except Exception as e:
-        print(f"❌ llama.cpp error: {e}")
+        logging.error(f"❌ llama.cpp error: {e}")
         return None
 
 

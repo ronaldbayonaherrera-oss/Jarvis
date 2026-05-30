@@ -32,6 +32,8 @@ import socket
 import tempfile
 import threading
 import time
+import logging
+import re
 from functools import wraps
 
 from flask import Flask, jsonify, request
@@ -45,13 +47,15 @@ from transcriptor import (
     transcribir_archivo,
 )
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 app = Flask(__name__)
 _lock = threading.Lock()
 
-REDES_PERMITIDAS: list[ipaddress.IPv4Network] = []
+RED_PERMITIDAS: list[ipaddress.IPv4Network] = []
 
 
-# ── Helpers de red ────────────────────────────────────────────────────────────
+# ── Helpers de red ─────────────────────────────────────────────────────────
 
 def obtener_ip_wifi() -> str:
     try:
@@ -78,6 +82,31 @@ def ip_permitida(ip_cliente: str) -> bool:
         return False
 
 
+# ✅ Función de sanitización de nombres de archivo
+def sanitizar_filename(filename: str) -> str:
+    """
+    Sanitiza el nombre de archivo para prevenir path traversal y caracteres peligrosos.
+    Devuelve un nombre seguro o "audio.wav" si está vacío.
+    """
+    if not filename:
+        return "audio.wav"
+    
+    # Elimina ruta completa si la contiene
+    filename = os.path.basename(filename)
+    
+    # Solo permite caracteres seguros
+    filename = re.sub(r'[^\w\s.-]', '', filename)
+    
+    # Limita la longitud
+    filename = filename[:100] if filename else "audio.wav"
+    
+    # Asegura una extensión válida
+    if not filename or filename.startswith('.'):
+        filename = "audio.wav"
+    
+    return filename
+
+
 # ── Decorador de protección ──────────────────────────────────────────────────
 
 def solo_red_local(f):
@@ -92,7 +121,7 @@ def solo_red_local(f):
     return wrapper
 
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
+# ── Endpoints ───────────────────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 @solo_red_local
@@ -148,6 +177,7 @@ def transcribir_endpoint():
             "duracion_total_s": elapsed,
         })
     except Exception as e:
+        logging.error(f"Error en transcripción: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
     finally:
         limpiar()
@@ -170,7 +200,10 @@ def transcribir_archivo_endpoint():
     tmp_path = None
     inicio = time.time()
     try:
-        sufijo = os.path.splitext(archivo.filename or "audio.wav")[1] or ".wav"
+        # ✅ Sanitización de nombre de archivo
+        nombre_seguro = sanitizar_filename(archivo.filename or "audio.wav")
+        sufijo = os.path.splitext(nombre_seguro)[1] or ".wav"
+        
         with tempfile.NamedTemporaryFile(suffix=sufijo, delete=False) as tmp:
             archivo.save(tmp)
             tmp_path = tmp.name
@@ -188,14 +221,18 @@ def transcribir_archivo_endpoint():
             "duracion_total_s": elapsed,
         })
     except Exception as e:
+        logging.error(f"Error en transcripción de archivo: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
     finally:
         if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+            try:
+                os.remove(tmp_path)
+            except OSError as e:
+                logging.warning(f"No se pudo limpiar archivo temporal {tmp_path}: {e}")
         _lock.release()
 
 
-# ── Arranque ─────────────────────────────────────────────────────────────────
+# ── Arranque ───────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Puente API para Whisper (solo WiFi local)")
