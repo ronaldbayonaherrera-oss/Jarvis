@@ -180,10 +180,16 @@ def main():
                 grabador.activo = False
                 time.sleep(0.5)
 
-                subprocess.run(
-                    [python_cmd, str(Path(__file__).parent / "jarvis.py")],
-                    cwd=str(BASE_DIR)
-                )
+                try:
+                    subprocess.run(
+                        [python_cmd, str(Path(__file__).parent / "jarvis.py")],
+                        cwd=str(BASE_DIR),
+                        timeout=3600  # ✅ Timeout de 1 hora
+                    )
+                except subprocess.TimeoutExpired:
+                    logging.error("Jarvis tardó demasiado (timeout)")
+                except Exception as e:
+                    logging.error(f"Error al ejecutar Jarvis: {e}")
 
                 with cola_audio.mutex:
                     cola_audio.queue.clear()
